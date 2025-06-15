@@ -1,6 +1,6 @@
 # VAJEL
 
-This is the code for our paper: Protein Complex Identification through Variational Autoencoder-Based Joint Learning on Knowledge-Enhanced PPI Attribute Networks.
+This is the code for our paper: Protein Complex Identification via Joint Embedding Learning with a Variational Graph Autoencoder.
 
 ## **Requirements**
 
