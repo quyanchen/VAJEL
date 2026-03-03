@@ -61,7 +61,7 @@ try:
     features_nonzero = features[1].shape[0]
 
     # Create model
-    model = CAN(placeholders, num_features, num_nodes, features_nonzero)
+    model = VAJEL(placeholders, num_features, num_nodes, features_nonzero)
     pos_weight_u = float(adj.shape[0] * adj.shape[0] - adj.sum()) / adj.sum()
     norm_u = adj.shape[0] * adj.shape[0] / float((adj.shape[0] * adj.shape[0] - adj.sum()) * 2)
     pos_weight_a = float(features[2][0] * features[2][1] - len(features[1])) / len(features[1])
@@ -69,7 +69,7 @@ try:
 
     # Optimizer
     with tf.name_scope('optimizer'):
-        opt = OptimizerCAN(preds=model.reconstructions,
+        opt = OptimizerVAJEL(preds=model.reconstructions,
                             labels=(
                                 tf.reshape(tf.sparse_tensor_to_dense(placeholders['adj_orig'], validate_indices=False), [-1]),
                                 tf.reshape(tf.sparse_tensor_to_dense(placeholders['features_orig'], validate_indices=False),
