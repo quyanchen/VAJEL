@@ -1,435 +1,386 @@
+from pathlib import Path
+import subprocess
 import numpy as np
-import os
-node_embedding_file = f'bio_VAEJL_n.emb.npy' 
-attr_embedding_file = f'bio_VAEJL_a.emb.npy'
-node_attr_file = f'bio_VAEJL.node'
-if not os.path.exists(node_attr_file):
-	print(f"File not found: {node_attr_file}")
-	continue
-else:
-	try:
-		with open(node_attr_file, 'r') as file:
-			lines = file.readlines()  
-		with open(node_attr_file, 'w') as file:
-			file.writelines(lines)
 
-		print(f"Successfully removed the first two lines from {node_attr_file}.")
-	except Exception as e:
-		print(f"Error while processing file {node_attr_file}: {e}")
-if not os.path.exists(node_embedding_file):
-	print(f"Skipping {ii}: Missing file {node_embedding_file}.")
-	continue
-if not os.path.exists(attr_embedding_file):
-	print(f"Skipping {ii}: Missing file {attr_embedding_file}.")
-	continue
-if not os.path.exists(node_attr_file):
-	print(f"Skipping {ii}: Missing file {node_attr_file}.")
-	continue
-try:
-	node_embeddings = np.load(node_embedding_file) 
-	print(f"Loaded node embeddings from {node_embedding_file}")
-except Exception as e:
-	print(f"Error loading node embeddings: {e}")
-	continue
-try:
-	attr_embeddings = np.load(attr_embedding_file)
-	print(f"Loaded attribute embeddings from {attr_embedding_file}")
-except Exception as e:
-	print(f"Error loading attribute embeddings: {e}")
-	continue
-try:
-	node_attr_pairs = np.loadtxt(node_attr_file, dtype=int) 
-	print(f"Loaded node-attribute pairs from {node_attr_file}")
-except Exception as e:
-	print(f"Error loading node-attribute pairs: {e}")
-	continue
-with open('result/bio_result_VAEJL.txt', 'w') as result_file:
-	result_file.write("alpha\tbeta\tprecision\trecall\tF1\tAcc\n")
-	alpha = 0
-	beta = 1- alpha
-	combined_embeddings = np.zeros((node_embeddings.shape[0], node_embeddings.shape[1]))
-	for node_idx, attr_idx in node_attr_pairs:
-		if node_idx < 0 or node_idx >= node_embeddings.shape[0]:
-			print(f"Warning: node index {node_idx} is out of bounds. Skipping.")
-			continue
-		if attr_idx < 0 or attr_idx >= attr_embeddings.shape[0]:
-			print(f"Warning: attribute index {attr_idx} is out of bounds. Skipping.")
-			continue
+ALPHA = 0.1
+BETA = 0.9
+EXPEND = 0.1
+dataset = 'k14'
+# =========================
+node_embedding_file = Path(f"/VAJEL-master/result/{dataset}_stke_n.emb.npy")
+attr_embedding_file = Path(f"/VAJEL-master/result/{dataset}_stke_a.emb.npy")
+node_attr_file      = Path(f"/VAJEL-master/data/{dataset}_stke.node")
 
-		# 加权平均
-		combined_embeddings[node_idx] += (alpha * node_embeddings[node_idx] +
-											beta * attr_embeddings[attr_idx])
+edge_list_file      = Path(f"/VAJEL-master/STKE_PPI/{dataset}_cc_tt.txt")
+node_name_file      = Path(f"/VAJEL-master/STKE_PPI/{dataset}_STKE_node.txt") 
 
-	# 归一化结果
-	attr_count = np.bincount(node_attr_pairs[:, 0], minlength=node_embeddings.shape[0])  # 这里不再减1
-	combined_embeddings /= np.maximum(1, attr_count[:, np.newaxis])  # 保持维度一致
-	np.savetxt('result/bio_VAEJL_embeddings.txt', combined_embeddings)
-	print("Combined embeddings saved to 'bionew_embeddings.txt'")
+golden_file         = Path("golden_standard.txt")
 
-	# 读取节点名
-	with open(f'bio_VAEJL_node.txt', 'r') as f:
-		bio_nodes = [line.strip() for line in f]
+result_dir = Path("result")
+result_dir.mkdir(parents=True, exist_ok=True)
 
-	with open('result/bio_VAEJL_embeddings.txt', 'r') as f:
-		emb_vectors = [line.strip() for line in f]
+out_results_file = result_dir / f"results{dataset}.txt"
+out_emb_txt      = result_dir / f"{dataset}_embeddings.txt"
+out_named_emb    = result_dir / f"combined_{dataset}_n_emb.txt"
+out_edge_sim     = result_dir / f"{dataset}_attr_sim.txt"
+out_complex_file = result_dir / f"final_{dataset}_attr_output"
 
-	if len(bio_nodes) != len(emb_vectors):
-		raise ValueError("两个文件的行数不匹配！")
+CONVERT_EXE = Path("ConvertPPI.exe")
+MINING_EXE  = Path("Mining_Cliques.exe")
 
-	new_data = []
-
-	for node, vector in zip(bio_nodes, emb_vectors):
-		new_data.append([node] + vector.split())
-	with open('result/combined_bio_VAEJL_n_emb.txt', 'w') as f:
-		for row in new_data:
-			f.write('\t'.join(row) + '\n')
-	def cos_sim(vector1, vector2):
-		dot_product = 0.0
-		normA = 0.0
-		normB = 0.0
-		for a, b in zip(vector1, vector2):
-			dot_product += a * b
-			normA += a ** 2
-			normB += b ** 2
-		if normA == 0 or normB == 0:
-			return 0.0 
-		return dot_product / ((normA * normB) ** 0.5)
-
-	for num in range(3, 4):
-		str1 = f"bio_cc_tt.txt"  # Edge list file
-		str2 = "result/combined_bio_VAEJL_n_emb.txt"  # Node embeddings file
-		str3 = "result/bio_VAEJL_attr_sim.txt"  # Output file
-
-		# Process subnet_graph file to get the nodes
-		print(f"Processing: {str1}")
-		with open(str1) as file1:
-			node = set()  # Use a set for unique nodes
-			edge_name_name = []
-
-			for line in file1:
-				temp1, temp2 = line.strip().split(' ')  # Split using tab
-				node.add(temp1)
-				node.add(temp2)
-				edge_name_name.append((temp1, temp2))  # Store edges
-
-		# Read vector file and map node names to their vectors
-		vector = {}
-		with open(str2) as file:
-			for line in file:
-				if not line.strip(): continue  # Skip empty lines
-				parts = line.strip().split('\t')  # Split using tab
-				node_name = parts[0]
-				node_vector = list(map(float, parts[1:]))  # Convert remaining parts to floats
-				vector[node_name] = np.array(node_vector)  # Store in dictionary
-
-		# Process edges and calculate similarities
-		with open(str3, 'w') as file2:
-			for node_name1, node_name2 in edge_name_name:
-				v1 = vector.get(node_name1)
-				v2 = vector.get(node_name2)
-
-				# Ensure vectors are valid and calculate similarity
-				if v1 is not None and v2 is not None:
-					result = cos_sim(v1, v2)
-					file2.write(f"{node_name1} {node_name2} {result}\n")
-				else:
-					print(f"Warning: One of the nodes ({node_name1} or {node_name2}) does not have a vector.")
-
-	def f_key(a):
-		return (a[-1])
+protein_out_file = Path("protein.temp")
+cliques_file     = Path("cliques")
+ppi_pair_file    = Path("ppi.pair")
+ppi_matrix_file  = Path("ppi.matrix")
 
 
-	def density_score(temp_set, matrix):
-		temp_density_score = 0.
-		for m in temp_set:
-			for n in temp_set:
-				if n != m and matrix[m, n] != 0:
-					temp_density_score += matrix[m, n]
+def load_array_auto(p: Path) -> np.ndarray:
 
-		temp_density_score = temp_density_score / (len(temp_set) * (len(temp_set) - 1))
-		return temp_density_score
-
-
-	def merge_cliques(new_cliques_set, matrix):
-		seed_clique = []
-
-		while (True):
-			temp_cliques_set = []
-			if len(new_cliques_set) >= 2:
-				seed_clique.append(new_cliques_set[0])
-
-				for i in range(1, len(new_cliques_set)):
-					if len(new_cliques_set[i].intersection(new_cliques_set[0])) == 0:
-						temp_cliques_set.append(new_cliques_set[i])
-					elif len(new_cliques_set[i].difference(new_cliques_set[0])) >= 3:
-						temp_cliques_set.append(new_cliques_set[i].difference(new_cliques_set[0]))
-
-				cliques_set = []
-
-				for i in temp_cliques_set:
-
-					clique_score = density_score(i, matrix)
-					temp_list = []
-					for j in i:
-						temp_list.append(j)
-
-					temp_list.append(clique_score)
-					cliques_set.append(temp_list)
-
-				cliques_set.sort(key=f_key, reverse=True)
-
-				new_cliques_set = []
-				for i in range(len(cliques_set)):
-					temp_set = set([])
-					for j in range(len(cliques_set[i]) - 1):
-						temp_set.add(cliques_set[i][j])
-					new_cliques_set.append(temp_set)
-
-			elif len(new_cliques_set) == 1:
-				seed_clique.append(new_cliques_set[0])
-				break
-			else:
-				break
-
-		return seed_clique
+    try:
+        arr = np.load(p, allow_pickle=False)
+        if hasattr(arr, "files"):
+            raise ValueError(f"{p} looks like .npz; please specify which array key to load.")
+        return arr
+    except Exception:
+        return np.loadtxt(p)
 
 
-	def expand_cluster(seed_clique, all_protein_set, matrix, expand_thres):
-		expand_set = []
-		complex_set = []
-
-		for instance in seed_clique:
-			avg_node_score = density_score(instance, matrix)
-
-			temp_set = set([])
-			for j in all_protein_set.difference(instance):
-				temp_score = 0.
-				for n in instance:
-					temp_score += matrix[n, j]
-				temp_score /= len(instance)
-
-				if (temp_score) >= expand_thres:
-					temp_set.add(j)
-			expand_set.append(temp_set)
-		for i in range(len(seed_clique)):
-			complex_set.append(seed_clique[i].union(expand_set[i]))
-
-		return (complex_set)
+def read_edges(edge_path: Path):
+    edges = []
+    with edge_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            a, b = line.split()
+            edges.append((a, b))
+    return edges
 
 
-	protein_out_file = "protein.temp"  # for each protein a index
-	cliques_file = "cliques"
-	ppi_pair_file = "ppi.pair"
-	ppi_matrix_file = "ppi.matrix"
+def read_node_names(node_path: Path):
+    with node_path.open("r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip()]
 
-	if __name__ == "__main__":
 
-		f = open("result/bio_VAEJL_attr_sim.txt", "r")
-		f_protein_out = open(protein_out_file, "w")
-		Dic_map = {}
-		index = 0
-		Node1 = []
-		Node2 = []
-		Weight = []
-		All_node = set([])
-		All_node_index = set([])
+def combine_embeddings(node_emb: np.ndarray,
+                       attr_emb: np.ndarray,
+                       node_attr_pairs: np.ndarray,
+                       alpha: float,
+                       beta: float) -> np.ndarray:
 
-		for line in f:
-			line = line.strip().split()
-			if len(line) == 3:
-				Node1.append(line[0])
-				All_node.add(line[0])
-				Node2.append(line[1])
-				All_node.add(line[1])
-				Weight.append(float(line[2]))
-				if line[0] not in Dic_map:
-					Dic_map[line[0]] = index
-					f_protein_out.write(line[0] + "\n")
-					All_node_index.add(index)
-					index += 1
-				if line[1] not in Dic_map:
-					Dic_map[line[1]] = index
-					f_protein_out.write(line[1] + "\n")
-					All_node_index.add(index)
-					index += 1
-		Node_count = index
-		f.close()
-		f_protein_out.close()
+    n_nodes, dim = node_emb.shape
 
-		f.close()
+    if node_attr_pairs.ndim != 2 or node_attr_pairs.shape[1] != 2:
+        raise ValueError("node_attr_pairs must be of shape [num_pairs, 2]")
 
-		######dic_map to map_dic###########
-		Map_dic = {}
-		for key in Dic_map.keys():
-			Map_dic[Dic_map[key]] = key
+    node_idx = node_attr_pairs[:, 0].astype(int)
+    attr_idx = node_attr_pairs[:, 1].astype(int)
 
-		# print Map_dic
+    valid = (
+        (node_idx >= 0) & (node_idx < n_nodes) &
+        (attr_idx >= 0) & (attr_idx < attr_emb.shape[0])
+    )
+    if not np.all(valid):
+        bad = np.count_nonzero(~valid)
+        print(f"[Warn] Found {bad} out-of-bound (node, attr) pairs; they will be skipped.")
 
-		######bulid Adj_matrix###########
+    node_idx = node_idx[valid]
+    attr_idx = attr_idx[valid]
 
-		Adj_Matrix = mat(zeros((Node_count, Node_count), dtype=float))
+    attr_sum = np.zeros((n_nodes, dim), dtype=float)
+    np.add.at(attr_sum, node_idx, attr_emb[attr_idx])
 
-		if len(Node1) == len(Node2):
+    cnt = np.bincount(node_idx, minlength=n_nodes).astype(float)  
+    cnt = np.maximum(cnt, 1.0)[:, None] 
+    attr_avg = attr_sum / cnt
 
-			for i in range(len(Node1)):
-				if Node1[i] in Dic_map and Node2[i] in Dic_map:
-					Adj_Matrix[Dic_map[Node1[i]], Dic_map[Node2[i]]] = Weight[i]
-					Adj_Matrix[Dic_map[Node2[i]], Dic_map[Node1[i]]] = Weight[i]
-		# print Adj_Matrix.shape[0]
+    combined = alpha * node_emb + beta * attr_avg
+    return combined
 
-		os.system(
-			"ConvertPPI.exe " + "biogrid.txt" + " " + protein_out_file + " " + ppi_pair_file + " " + ppi_matrix_file)
-		os.system(
-			"Mining_Cliques.exe " + ppi_matrix_file + " " + "1" + " " + "3" + " " + str(Node_count) + " " + cliques_file)
 
-		cliques_set = []
-		f = open(cliques_file, "r")
-		for line in f:
-			temp_set = []
-			line = line.strip().split()
-			for i in range(1, len(line)):
-				temp_set.append(int(line[i]))
-			cliques_set.append(temp_set)
+def write_named_embeddings(node_names, emb: np.ndarray, out_path: Path):
+    if len(node_names) != emb.shape[0]:
+        raise ValueError(f"Node name lines ({len(node_names)}) != embedding rows ({emb.shape[0]})")
 
-		f.close()
-		avg_clique_score = 0.
+    with out_path.open("w", encoding="utf-8") as f:
+        for name, vec in zip(node_names, emb):
+            f.write(name + "\t" + "\t".join(f"{x:.8f}" for x in vec) + "\n")
 
-		for instance in cliques_set:
-			clique_score = density_score(instance, Adj_Matrix)
-			avg_clique_score += clique_score
-			instance.append(clique_score)
-		# avg_clique_score /= len(cliques_set)
-		cliques_set.sort(key=f_key, reverse=True)
-		# print cliques_set
 
-		new_cliques_set = []
-		for i in range(len(cliques_set)):
-			temp_set = set([])
-			for j in range(len(cliques_set[i]) - 1):
-				temp_set.add(cliques_set[i][j])
-			new_cliques_set.append(temp_set)
-		# print new_cliques_set
-		# print len(new_cliques_set)
+def build_edge_cosine_sim(edge_path: Path, named_emb_path: Path, out_path: Path):
+    vectors = {}
+    with named_emb_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            name = parts[0]
+            vec = np.asarray(list(map(float, parts[1:])), dtype=float)
+            vectors[name] = vec
 
-		seed_clique = merge_cliques(new_cliques_set, Adj_Matrix)
-		# print seed_clique
-		# print len(seed_clique)
+    edges = read_edges(edge_path)
 
-		expand_thres = 0.3
-		complex_set = expand_cluster(seed_clique, All_node_index, Adj_Matrix, expand_thres)
-		print("##########output predicted complexes##########\n")
-		final_file = open(f"result/final_bio_VAEJL_alpha{alpha}_attr_output", "w")
+    def cos_sim(v1: np.ndarray, v2: np.ndarray) -> float:
+        n1 = np.linalg.norm(v1)
+        n2 = np.linalg.norm(v2)
+        if n1 == 0.0 or n2 == 0.0:
+            return 0.0
+        return float(np.dot(v1, v2) / (n1 * n2))
 
-		for i in range(len(complex_set)):
+    missing = 0
+    with out_path.open("w", encoding="utf-8") as fo:
+        for u, v in edges:
+            v1 = vectors.get(u, None)
+            v2 = vectors.get(v, None)
+            if v1 is None or v2 is None:
+                missing += 1
+                continue
+            fo.write(f"{u} {v} {cos_sim(v1, v2)}\n")
 
-			line = ""
-			for m in complex_set[i]:
-				line += Map_dic[m] + " "
-			line += "\n"
+    if missing > 0:
+        print(f"[Warn] {missing} edges skipped due to missing node vectors.")
 
-			final_file.write(line)
-		final_file.close()
 
-		print("##########COAN completes############")
-		
-		import networkx as nx
-		import numpy as np
-		import matplotlib.pyplot as plt
-		strr = f"result/final_bio_VAEJL_alpha{alpha}_attr_output"
-		file = open(strr)
-		file1 = open("golden_standard.txt")
-		
-		# g=nx.Graph()
-		predicted_num = len(file.readlines())
-		reference_num = len(file1.readlines())
-		file.close()
-		file1.close()
-		
-		file = open(strr)
-		file1 = open("golden_standard.txt")
-		reference_complex = []
-		for j in file1:
-			j = j.rstrip()
-			j = j.rstrip('\n')
-			complex_list = j.split(' ')
-			reference_complex.append(complex_list)
-		predicted_complex = []
-		for i in file:
-			i = i.rstrip()
-			i = i.rstrip('\n')
-			node_list = i.split(' ')
-			predicted_complex.append(node_list)
-		# precision
-		number = 0
-		c_number = 0
-		row = 1
-		for i in predicted_complex:
-			overlapscore = 0.0
-			for j in reference_complex:
-				set1 = set(i)
-				set2 = set(j)
-				overlap = set1 & set2
-				score = float((pow(len(overlap), 2))) / float((len(set1) * len(set2)))
-				if (score > overlapscore):
-					overlapscore = score
-			if (overlapscore > 0.2):
-				number = number + 1
-			# print row,
-			# print " ",
-			row = row + 1
-		# recall
-		for i in reference_complex:
-			overlapscore = 0.0
-			for j in predicted_complex:
-				set1 = set(i)
-				set2 = set(j)
-				overlap = set1 & set2
-				score = float((pow(len(overlap), 2))) / float((len(set1) * len(set2)))
-				if (score > overlapscore):
-					overlapscore = score
-			if (overlapscore > 0.25):
-				c_number = c_number + 1
-		# sn
-		T_sum1 = 0.0
-		N_sum = 0.0
-		for i in reference_complex:
-			max = 0.0
-			for j in predicted_complex:
-				set1 = set(i)
-				set2 = set(j)
-				overlap = set1 & set2
-				if len(overlap) > max:
-					max = len(overlap)
-			T_sum1 = T_sum1 + max
-			N_sum = N_sum + len(set1)
-		# ppv
-		T_sum2 = 0.0
-		T_sum = 0.0
-		for i in predicted_complex:
-			max = 0.0
-			for j in reference_complex:
-				set1 = set(i)
-				set2 = set(j)
-				overlap = set1 & set2
-				T_sum = T_sum + len(overlap)
-				if len(overlap) > max:
-					max = len(overlap)
-			T_sum2 = T_sum2 + max
-		
-		# print "\n"
-		print(number, predicted_num)  # matched predicted complex number
-		# print c_number,reference_num# matched reference complex number
-		precision = float(number / float(predicted_num))
-		recall = float(c_number / float(reference_num))
-		F1 = float((2 * precision * recall) / (precision + recall))
-		Sn = float(T_sum1) / float(N_sum)
-		PPV = float(T_sum2) / float(T_sum)
-		Acc = pow(float(Sn * PPV), 0.5)
-		print(strr)
-		print(alpha)
-		print(precision)
-		print(recall)
-		print(F1)
-		print(Acc)
-		# 将结果写入文件
-		result_file.write(f"{alpha:.2f}\t{beta:.2f}\t{precision:.4f}\t{recall:.4f}\t{F1:.4f}\t{Acc:.4f}\n")
+def density_score(temp_set, matrix):
+    if len(temp_set) < 2:
+        return 0.0
+    temp_density_score = 0.0
+    for m in temp_set:
+        for n in temp_set:
+            if n != m and matrix[m, n] != 0:
+                temp_density_score += matrix[m, n]
+    temp_density_score = temp_density_score / (len(temp_set) * (len(temp_set) - 1))
+    return temp_density_score
+
+
+def merge_cliques(new_cliques_set, matrix):
+    seed_clique = []
+    while True:
+        if len(new_cliques_set) >= 2:
+            seed_clique.append(new_cliques_set[0])
+
+            temp_cliques_set = []
+            for i in range(1, len(new_cliques_set)):
+                if len(new_cliques_set[i].intersection(new_cliques_set[0])) == 0:
+                    temp_cliques_set.append(new_cliques_set[i])
+                elif len(new_cliques_set[i].difference(new_cliques_set[0])) >= 3:
+                    temp_cliques_set.append(new_cliques_set[i].difference(new_cliques_set[0]))
+
+            cliques_set = []
+            for s in temp_cliques_set:
+                score = density_score(s, matrix)
+                lst = list(s) + [score]
+                cliques_set.append(lst)
+
+            cliques_set.sort(key=lambda a: a[-1], reverse=True)
+
+            new_cliques_set = []
+            for item in cliques_set:
+                new_cliques_set.append(set(item[:-1]))
+
+        elif len(new_cliques_set) == 1:
+            seed_clique.append(new_cliques_set[0])
+            break
+        else:
+            break
+
+    return seed_clique
+
+
+def expand_cluster(seed_clique, all_protein_set, matrix, expand_thres):
+    expand_set = []
+    complex_set = []
+
+    for instance in seed_clique:
+        temp_set = set()
+        for j in all_protein_set.difference(instance):
+            temp_score = 0.0
+            for n in instance:
+                temp_score += matrix[n, j]
+            temp_score /= len(instance)
+            if temp_score >= expand_thres:
+                temp_set.add(j)
+        expand_set.append(temp_set)
+
+    for i in range(len(seed_clique)):
+        complex_set.append(seed_clique[i].union(expand_set[i]))
+
+    return complex_set
+
+
+def run_coan(edge_sim_file: Path, out_complex: Path):
+    Dic_map = {}
+    Node1, Node2, Weight = [], [], []
+    all_node_index = set()
+
+    with edge_sim_file.open("r", encoding="utf-8") as f, protein_out_file.open("w", encoding="utf-8") as f_protein_out:
+        idx = 0
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) != 3:
+                continue
+            a, b, w = parts[0], parts[1], float(parts[2])
+            Node1.append(a); Node2.append(b); Weight.append(w)
+
+            if a not in Dic_map:
+                Dic_map[a] = idx
+                f_protein_out.write(a + "\n")
+                all_node_index.add(idx)
+                idx += 1
+            if b not in Dic_map:
+                Dic_map[b] = idx
+                f_protein_out.write(b + "\n")
+                all_node_index.add(idx)
+                idx += 1
+
+    Node_count = len(Dic_map)
+    Map_dic = {v: k for k, v in Dic_map.items()}
+
+    Adj = np.zeros((Node_count, Node_count), dtype=float)
+    for a, b, w in zip(Node1, Node2, Weight):
+        ia, ib = Dic_map[a], Dic_map[b]
+        Adj[ia, ib] = w
+        Adj[ib, ia] = w
+
+    subprocess.run([str(CONVERT_EXE), str(edge_list_file), str(protein_out_file), str(ppi_pair_file), str(ppi_matrix_file)], check=True)
+    mining_proc = subprocess.run([str(MINING_EXE), str(ppi_matrix_file), "1", "3", str(Node_count), str(cliques_file)], check=False)
+    if (not cliques_file.exists()) or cliques_file.stat().st_size == 0:
+        raise RuntimeError(f"Mining_Cliques failed (returncode={mining_proc.returncode}) and produced no cliques file.")
+
+    cliques_set = []
+    with cliques_file.open("r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) <= 1:
+                continue
+            clique = [int(x) for x in parts[1:]]
+            if len(clique) >= 2:
+                cliques_set.append(clique)
+
+    if len(cliques_set) == 0:
+        raise RuntimeError("No cliques mined. Please check Mining_Cliques.exe output.")
+
+    max_idx = max(max(c) for c in cliques_set)
+    if max_idx >= Node_count:
+        raise RuntimeError(f"Clique index out of range: max={max_idx}, Node_count={Node_count}. Check ConvertPPI input arguments and generated ppi.matrix.")
+
+    scored = []
+    for c in cliques_set:
+        score = density_score(c, Adj)
+        scored.append(c + [score])
+    scored.sort(key=lambda a: a[-1], reverse=True)
+
+    new_cliques_set = [set(item[:-1]) for item in scored]
+    seed_clique = merge_cliques(new_cliques_set, Adj)
+
+    expand_thres = EXPEND
+    complex_set = expand_cluster(seed_clique, all_node_index, Adj, expand_thres)
+
+    with out_complex.open("w", encoding="utf-8") as f:
+        for comp in complex_set:
+            f.write(" ".join(Map_dic[i] for i in comp) + "\n")
+
+
+def evaluate(pred_file: Path, ref_file: Path):
+    with pred_file.open("r", encoding="utf-8") as f:
+        predicted_complex = [line.strip().split() for line in f if line.strip()]
+    with ref_file.open("r", encoding="utf-8") as f:
+        reference_complex = [line.strip().split() for line in f if line.strip()]
+
+    predicted_num = len(predicted_complex)
+    reference_num = len(reference_complex)
+
+    matched_pred = 0
+    for p in predicted_complex:
+        best = 0.0
+        sp = set(p)
+        for r in reference_complex:
+            sr = set(r)
+            ov = sp & sr
+            score = (len(ov) ** 2) / (len(sp) * len(sr)) if (len(sp) and len(sr)) else 0.0
+            best = max(best, score)
+        if best > 0.2:
+            matched_pred += 1
+
+    matched_ref = 0
+    for r in reference_complex:
+        best = 0.0
+        sr = set(r)
+        for p in predicted_complex:
+            sp = set(p)
+            ov = sp & sr
+            score = (len(ov) ** 2) / (len(sp) * len(sr)) if (len(sp) and len(sr)) else 0.0
+            best = max(best, score)
+        if best > 0.2:
+            matched_ref += 1
+
+    precision = matched_pred / predicted_num if predicted_num else 0.0
+    recall    = matched_ref / reference_num if reference_num else 0.0
+    F1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+
+    T_sum1, N_sum = 0.0, 0.0
+    for r in reference_complex:
+        sr = set(r)
+        mx = 0
+        for p in predicted_complex:
+            sp = set(p)
+            mx = max(mx, len(sr & sp))
+        T_sum1 += mx
+        N_sum += len(sr)
+    Sn = (T_sum1 / N_sum) if N_sum else 0.0
+
+    T_sum2, T_sum = 0.0, 0.0
+    for p in predicted_complex:
+        sp = set(p)
+        mx = 0
+        for r in reference_complex:
+            sr = set(r)
+            ov = sp & sr
+            T_sum += len(ov)
+            mx = max(mx, len(ov))
+        T_sum2 += mx
+    PPV = (T_sum2 / T_sum) if T_sum else 0.0
+    Acc = float(np.sqrt(Sn * PPV)) if (Sn * PPV) >= 0 else 0.0
+
+    return precision, recall, F1, Acc
+
+
+def main():
+    # 1) Load
+    node_emb = load_array_auto(node_embedding_file)
+    attr_emb = load_array_auto(attr_embedding_file)
+    node_attr_pairs = np.loadtxt(node_attr_file, dtype=int)
+
+    # 2) Combine embeddings (fixed alpha/beta)
+    combined = combine_embeddings(node_emb, attr_emb, node_attr_pairs, ALPHA, BETA)
+    np.savetxt(out_emb_txt, combined)
+    print(f"[OK] Combined embeddings saved to: {out_emb_txt}")
+
+    # 3) Write named embeddings
+    node_names = read_node_names(node_name_file)
+    write_named_embeddings(node_names, combined, out_named_emb)
+    print(f"[OK] Named embeddings saved to: {out_named_emb}")
+
+    # 4) Edge cosine sim
+    build_edge_cosine_sim(edge_list_file, out_named_emb, out_edge_sim)
+    print(f"[OK] Edge cosine similarities saved to: {out_edge_sim}")
+
+    # 5) COAN mining
+    run_coan(out_edge_sim, out_complex_file)
+    print(f"[OK] Predicted complexes saved to: {out_complex_file}")
+
+    # 6) Evaluate
+    precision, recall, F1, Acc = evaluate(out_complex_file, golden_file)
+
+    # 7) Write final result line
+    with out_results_file.open("w", encoding="utf-8") as f:
+        f.write("alpha\tbeta\tprecision\trecall\tF1\tAcc\n")
+        f.write(f"{ALPHA:.2f}\t{BETA:.2f}\t{EXPEND:.2f}\t{precision:.4f}\t{recall:.4f}\t{F1:.4f}\t{Acc:.4f}\n")
+
+    print(f"[OK] Metrics written to: {out_results_file}")
+    print(f"alpha={ALPHA:.2f}, beta={BETA:.2f}, {EXPEND:.2f} | P={precision:.4f} R={recall:.4f} F1={F1:.4f} Acc={Acc:.4f}")
+
+
+if __name__ == "__main__":
+    main()
